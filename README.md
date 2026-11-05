@@ -60,7 +60,8 @@ Use the terminal command above to install, because macOS blocks a copy downloade
 
 ## Features
 
-- **Mark up:** pen, line, arrow, rectangle, oval, marker and text, each with its own size
+- **Mark up:** pen, line, rectangle, oval, marker and text, each with its own size
+- **Curved arrows:** drag along any path and the arrow follows it as a smooth curve, or stays straight if you drag straight
 - **Caption bar:** add a caption below the screenshot, with an optional date and window-title stamp
 - **Hindi typing:** type in Hinglish and get Hindi, with suggestions that learn the words you pick
 - **Several shots at once:** collect screenshots and combine them into one image

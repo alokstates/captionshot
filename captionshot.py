@@ -27,7 +27,7 @@ IS_MAC = sys.platform == "darwin"
 UI_FONT = "Segoe UI" if IS_WIN else "Helvetica Neue" if IS_MAC else "Sans Serif"
 MOD = "⌘" if IS_MAC else "Ctrl+"     # Qt maps Command to Ctrl on macOS
 APP_NAME = "CaptionShot"
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 ACCENT = "#007AFF"            # Apple system blue (light); dark uses #0A84FF via theme()
 SWATCHES = ["#e53935", "#fb8c00", "#fdd835", "#43a047", "#1e88e5", "#ffffff"]
 MIN_W, MAX_W = 1, 20      # tool size range (Ctrl + scroll)
@@ -625,17 +625,186 @@ def text_font(width):
     return _font(12 + width * 3, bold=True)
 
 
+# ---------------------------------------------------------------- curved arrows
+# The arrow follows the path of the mouse. Hand wobble is removed by fitting Bezier curves to the
+# path (Schneider, "An Algorithm for Automatically Fitting Digitized Curves", Graphics Gems, 1990).
+# A nearly straight drag gives a perfectly straight arrow.
+def _dist(a, b):
+    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def _path_len(pts):
+    return sum(_dist(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
+
+
+def _unit(x, y):
+    n = math.hypot(x, y)
+    return (x / n, y / n) if n > 1e-9 else (0.0, 0.0)
+
+
+def _resample(pts, step):
+    """Evenly spaced points along the path, keeping its exact start and end."""
+    out, gap = [pts[0]], 0.0
+    for i in range(len(pts) - 1):
+        a, b = pts[i], pts[i + 1]
+        seg = _dist(a, b)
+        while seg > 0 and gap + seg >= step:
+            f = (step - gap) / seg
+            a = (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f)
+            out.append(a)
+            seg = _dist(a, b)
+            gap = 0.0
+        gap += seg
+    if _dist(out[-1], pts[-1]) < step / 2 and len(out) > 1:
+        out.pop()
+    out.append(pts[-1])
+    return out
+
+
+def _bez_at(c, t):
+    s = 1 - t
+    b0, b1, b2, b3 = s * s * s, 3 * s * s * t, 3 * s * t * t, t * t * t
+    return (b0 * c[0][0] + b1 * c[1][0] + b2 * c[2][0] + b3 * c[3][0],
+            b0 * c[0][1] + b1 * c[1][1] + b2 * c[2][1] + b3 * c[3][1])
+
+
+def _bez_solve(pts, u, t1, t2):
+    """Least-squares control points for fixed ends and fixed end directions."""
+    p0, p3 = pts[0], pts[-1]
+    c00 = c01 = c11 = x0 = x1 = 0.0
+    for p, t in zip(pts, u):
+        s = 1 - t
+        b0, b1, b2, b3 = s * s * s, 3 * s * s * t, 3 * s * t * t, t * t * t
+        a1, a2 = (t1[0] * b1, t1[1] * b1), (t2[0] * b2, t2[1] * b2)
+        c00 += a1[0] * a1[0] + a1[1] * a1[1]
+        c01 += a1[0] * a2[0] + a1[1] * a2[1]
+        c11 += a2[0] * a2[0] + a2[1] * a2[1]
+        rx = p[0] - p0[0] * (b0 + b1) - p3[0] * (b2 + b3)
+        ry = p[1] - p0[1] * (b0 + b1) - p3[1] * (b2 + b3)
+        x0 += a1[0] * rx + a1[1] * ry
+        x1 += a2[0] * rx + a2[1] * ry
+    det = c00 * c11 - c01 * c01
+    al = (x0 * c11 - x1 * c01) / det if abs(det) > 1e-9 else 0.0
+    ar = (c00 * x1 - c01 * x0) / det if abs(det) > 1e-9 else 0.0
+    span = _path_len(pts)
+    if not (1e-3 * span < al < span and 1e-3 * span < ar < span):   # would overshoot: use a safe length
+        al = ar = span / 3
+    return (p0, (p0[0] + t1[0] * al, p0[1] + t1[1] * al), (p3[0] + t2[0] * ar, p3[1] + t2[1] * ar), p3)
+
+
+def _bez_refine(c, pts, u):
+    """One Newton step: for each point, move t towards the nearest place on the curve."""
+    d1 = [(3 * (c[i + 1][0] - c[i][0]), 3 * (c[i + 1][1] - c[i][1])) for i in range(3)]
+    d2 = [(2 * (d1[i + 1][0] - d1[i][0]), 2 * (d1[i + 1][1] - d1[i][1])) for i in range(2)]
+    out = []
+    for p, t in zip(pts, u):
+        s = 1 - t
+        q = _bez_at(c, t)
+        q1 = (s * s * d1[0][0] + 2 * s * t * d1[1][0] + t * t * d1[2][0],
+              s * s * d1[0][1] + 2 * s * t * d1[1][1] + t * t * d1[2][1])
+        q2 = (s * d2[0][0] + t * d2[1][0], s * d2[0][1] + t * d2[1][1])
+        ex, ey = q[0] - p[0], q[1] - p[1]
+        den = q1[0] * q1[0] + q1[1] * q1[1] + ex * q2[0] + ey * q2[1]
+        out.append(min(1.0, max(0.0, t - (ex * q1[0] + ey * q1[1]) / den)) if abs(den) > 1e-9 else t)
+    return out
+
+
+def _bez_fit(pts, t1, t2, tol, depth=0):
+    """Cubic Bezier segments within tol of pts. t1 and t2 point into the curve at each end."""
+    if len(pts) < 3:
+        span = _path_len(pts) / 3
+        return [(pts[0], (pts[0][0] + t1[0] * span, pts[0][1] + t1[1] * span),
+                 (pts[-1][0] + t2[0] * span, pts[-1][1] + t2[1] * span), pts[-1])]
+    total = _path_len(pts) or 1.0
+    u, run = [0.0], 0.0
+    for i in range(len(pts) - 1):
+        run += _dist(pts[i], pts[i + 1])
+        u.append(run / total)
+    best, split = None, len(pts) // 2
+    for _ in range(5):
+        c = _bez_solve(pts, u, t1, t2)
+        errs = [_dist(_bez_at(c, t), p) for p, t in zip(pts, u)]
+        err = max(errs)
+        if best is None or err < best[0]:
+            best, split = (err, c), errs.index(err)
+        if err <= tol:
+            return [c]
+        u = _bez_refine(c, pts, u)
+    if depth >= 5:
+        return [best[1]]
+    k = max(1, min(split, len(pts) - 1 - split, 4))
+    split = max(1, min(split, len(pts) - 2))
+    k = min(k, split, len(pts) - 1 - split)
+    tc = _unit(pts[split - k][0] - pts[split + k][0], pts[split - k][1] - pts[split + k][1])
+    return (_bez_fit(pts[:split + 1], t1, tc, tol, depth + 1)
+            + _bez_fit(pts[split:], (-tc[0], -tc[1]), t2, tol, depth + 1))
+
+
+def arrow_polyline(raw):
+    """The drawn line for a mouse path: two points when straight, else closely spaced points on a curve."""
+    pts = [raw[0]]
+    for q in raw[1:]:
+        if q != pts[-1]:
+            pts.append(q)
+    if len(pts) < 3:
+        return [pts[0], pts[-1]]
+    a, b = pts[0], pts[-1]
+    chord = _dist(a, b)
+    total = _path_len(pts)
+    ux, uy = _unit(b[0] - a[0], b[1] - a[1])
+    if chord > 0:
+        slack = max(3.0, chord * 0.025)
+        off = [(q[0] - a[0], q[1] - a[1]) for q in pts]
+        if all(abs(x * uy - y * ux) <= slack and -slack <= x * ux + y * uy <= chord + slack for x, y in off):
+            return [a, b]
+    even = _resample(pts, max(2.0, total / 80))
+    k = max(1, min(len(even) - 1, round(min(total * 0.12, 40.0) / (_path_len(even) / (len(even) - 1) or 1.0))))
+    t1 = _unit(even[k][0] - a[0], even[k][1] - a[1])
+    t2 = _unit(even[-1 - k][0] - b[0], even[-1 - k][1] - b[1])
+    out = [a]
+    for c in _bez_fit(even, t1, t2, min(14.0, max(5.0, total * 0.025))):
+        n = max(8, math.ceil(_path_len(c) / 1.5))
+        out.extend(_bez_at(c, i / n) for i in range(1, n + 1))
+    return out
+
+
+def _trim_end(pts, d):
+    """The polyline with length d removed from its end."""
+    for i in range(len(pts) - 1, 0, -1):
+        seg = _dist(pts[i], pts[i - 1])
+        if seg > d:
+            f = d / seg
+            return pts[:i] + [(pts[i][0] + (pts[i - 1][0] - pts[i][0]) * f,
+                               pts[i][1] + (pts[i - 1][1] - pts[i][1]) * f)]
+        d -= seg
+    return pts[:1]
+
+
 class Shape:
     def __init__(self, kind, color, width, pt):
         self.kind, self.color, self.width = kind, QColor(color), width
         self.pts = [QPointF(pt)]
         self.text = ""
+        self._arrow_cache = (None, None)
 
     def add(self, pt):
         if self.kind in ("pen", "marker") or len(self.pts) == 1:
             self.pts.append(QPointF(pt))
+        elif self.kind == "arrow":                # keep the mouse's path; the tip is always the pointer
+            last = self.pts[-1]
+            if len(self.pts) > 2 and math.hypot(pt.x() - last.x(), pt.y() - last.y()) < 2:
+                self.pts[-1] = QPointF(pt)
+            else:
+                self.pts.append(QPointF(pt))
         else:
             self.pts[-1] = QPointF(pt)
+
+    def arrow_line(self):
+        """Fitted line for an arrow, refitted only when its points have changed."""
+        key = [(q.x(), q.y()) for q in self.pts]
+        if self._arrow_cache[0] != key:
+            self._arrow_cache = (key, arrow_polyline(key))
+        return self._arrow_cache[1]
 
     def copy(self):
         c = Shape(self.kind, self.color, self.width, self.pts[0])
@@ -658,8 +827,11 @@ class Shape:
         elif self.kind in ("pen", "marker"):
             for q in self.pts[1:]:
                 path.lineTo(q)
-        elif self.kind in ("line", "arrow"):
+        elif self.kind == "line":
             path.lineTo(b)
+        elif self.kind == "arrow":
+            for x, y in self.arrow_line()[1:]:
+                path.lineTo(x, y)
         elif self.kind == "rect":
             path = QPainterPath()
             path.addRect(QRectF(a, b).normalized())
@@ -687,6 +859,8 @@ class Shape:
             return bool(self.text.strip())
         if self.kind in ("pen", "marker"):
             return True
+        if self.kind == "arrow":                  # a curve may end back where it started
+            return _path_len(self.arrow_line()) > 3
         a, b = self.pts[0], self.pts[-1]
         return abs(a.x() - b.x()) + abs(a.y() - b.y()) > 3
 
@@ -713,11 +887,17 @@ class Shape:
         elif self.kind == "line":
             p.drawLine(a, b)
         elif self.kind == "arrow":
-            ang = math.atan2(b.y() - a.y(), b.x() - a.x())
+            line = self.arrow_line()
             size = 10 + self.width * 2
-            shaft_end = QPointF(b.x() - size * 0.6 * math.cos(ang), b.y() - size * 0.6 * math.sin(ang))
-            p.drawLine(a, shaft_end)
-            p1 = QPointF(b.x() - size * math.cos(ang - 0.45), b.y() - size * math.sin(ang - 0.45))
+            # The head points along the last stretch of the curve, so a flick on release can't twist it.
+            base = _trim_end(line, size)[-1]
+            ang = math.atan2(b.y() - base[1], b.x() - base[0])
+            shaft = _trim_end(line, size * 0.6)
+            path = QPainterPath(a)
+            for x, y in shaft[1:]:
+                path.lineTo(x, y)
+            p.drawPath(path)
+            p1 =QPointF(b.x() - size * math.cos(ang - 0.45), b.y() - size * math.sin(ang - 0.45))
             p2 = QPointF(b.x() - size * math.cos(ang + 0.45), b.y() - size * math.sin(ang + 0.45))
             p.setPen(QPen(self.color, 1, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
             p.setBrush(self.color)
@@ -4111,6 +4291,9 @@ def selftest(app):
             problems.append("icons do not render")
         if tool_cursor("pen", 1.0).pixmap().isNull():
             problems.append("SVG cursors do not render (QtSvg missing)")
+        if len(arrow_polyline([(0.0, 0.0), (50.0, 1.0), (100.0, 0.0)])) != 2 \
+                or len(arrow_polyline([(0.0, 0.0), (50.0, 60.0), (100.0, 0.0)])) < 3:
+            problems.append("curved arrow fitting failed")
         shot = QImage(400, 120, QImage.Format_RGB32)
         shot.fill(QColor("#3366cc"))
         img = compose(shot, "भुगतान सफल रहा · payment done", "stamp", 1.0, 20)
