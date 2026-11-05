@@ -1,0 +1,120 @@
+# Every push and pull request: build and self-test on Windows and macOS.
+# A version tag (git tag v1.2.3 && git push --tags) also publishes a release and then
+# runs the one-line installers on clean machines.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      PY_PYTHON: "3.13"   # build.bat uses the py launcher; this makes it choose the version below
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Build and self-test
+        shell: cmd
+        run: call .\build.bat
+      - name: Give the installer a stable name
+        shell: bash
+        run: |
+          mkdir out
+          cp dist/CaptionShot-Setup-*.exe out/CaptionShot-Setup-windows-x64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/*
+          if-no-files-found: error
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-latest, name: macos-arm64 }
+          - { runner: macos-15-intel, name: macos-x86_64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build and self-test
+        env:
+          PYTHON: python
+        run: bash build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/CaptionShot-macOS-*.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches the app version
+        run: |
+          app="$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' captionshot.py)"
+          if [ "v$app" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match APP_VERSION $app in captionshot.py"
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" * --repo "$GITHUB_REPOSITORY" --generate-notes
+
+  verify-windows:
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - name: Run the one-line installer
+        shell: powershell   # Windows PowerShell 5.1: what most people have
+        run: irm https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/install.ps1 | iex
+      - name: Self-test the installed app
+        shell: powershell
+        run: |
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\CaptionShot\CaptionShot.exe'
+          $p = Start-Process -FilePath $exe -ArgumentList '--selftest' -Wait -PassThru
+          Get-Content (Join-Path $env:TEMP 'captionshot_selftest.txt')
+          if ($p.ExitCode -ne 0) { throw "Self-test failed: $($p.ExitCode)" }
+
+  verify-macos:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Run the one-line installer
+        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/install.sh | bash
+      - name: Self-test the installed app
+        run: |
+          /Applications/CaptionShot.app/Contents/MacOS/CaptionShot --selftest
+          cat "${TMPDIR%/}/captionshot_selftest.txt"

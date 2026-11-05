@@ -1,0 +1,10 @@
+* text=auto
+# These break if git changes their line endings on the wrong platform.
+*.sh  text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.iss text eol=crlf
+*.ttf binary
+*.ico binary
+*.icns binary
+*.png binary
