@@ -1,0 +1,45 @@
+# Runs the one-line installers on clean machines against the latest release.
+# Runs after each release, whenever an installer changes, and on demand from the Actions tab.
+name: Verify install
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - install.ps1
+      - install.sh
+      - .github/workflows/verify-install.yml
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Run the one-line installer
+        shell: powershell   # Windows PowerShell 5.1: what most people have
+        run: irm https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/install.ps1 | iex
+      - name: Self-test the installed app
+        shell: powershell
+        run: |
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\CaptionShot\CaptionShot.exe'
+          $p = Start-Process -FilePath $exe -ArgumentList '--selftest' -Wait -PassThru
+          Get-Content (Join-Path $env:TEMP 'captionshot_selftest.txt')
+          if ($p.ExitCode -ne 0) { throw "Self-test failed: $($p.ExitCode)" }
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Run the one-line installer
+        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/install.sh | bash
+      - name: Self-test the installed app
+        run: |
+          /Applications/CaptionShot.app/Contents/MacOS/CaptionShot --selftest
+          cat "${TMPDIR%/}/captionshot_selftest.txt"

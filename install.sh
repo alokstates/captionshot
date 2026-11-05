@@ -16,7 +16,7 @@ main() {
   [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = "1" ] && arch="arm64"
   local zip="CaptionShot-macOS-$arch.zip"
 
-  local tmp
+  # Not "local": the EXIT trap runs after main() has returned.
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
 

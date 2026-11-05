@@ -89,32 +89,6 @@ jobs:
           cat SHA256SUMS.txt
           gh release create "$GITHUB_REF_NAME" * --repo "$GITHUB_REPOSITORY" --generate-notes
 
-  verify-windows:
+  verify-install:
     needs: release
-    runs-on: windows-latest
-    steps:
-      - name: Run the one-line installer
-        shell: powershell   # Windows PowerShell 5.1: what most people have
-        run: irm https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/install.ps1 | iex
-      - name: Self-test the installed app
-        shell: powershell
-        run: |
-          $exe = Join-Path $env:LOCALAPPDATA 'Programs\CaptionShot\CaptionShot.exe'
-          $p = Start-Process -FilePath $exe -ArgumentList '--selftest' -Wait -PassThru
-          Get-Content (Join-Path $env:TEMP 'captionshot_selftest.txt')
-          if ($p.ExitCode -ne 0) { throw "Self-test failed: $($p.ExitCode)" }
-
-  verify-macos:
-    needs: release
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-latest, macos-15-intel]
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Run the one-line installer
-        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/install.sh | bash
-      - name: Self-test the installed app
-        run: |
-          /Applications/CaptionShot.app/Contents/MacOS/CaptionShot --selftest
-          cat "${TMPDIR%/}/captionshot_selftest.txt"
+    uses: ./.github/workflows/verify-install.yml
