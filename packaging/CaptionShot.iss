@@ -2,7 +2,7 @@
 ; Per-user install: no admin rights, no UAC prompt. Built by build.bat.
 
 #define AppName "CaptionShot"
-#define AppVersion "1.1.1"
+#define AppVersion "1.1.2"
 #define AppExe "CaptionShot.exe"
 
 [Setup]

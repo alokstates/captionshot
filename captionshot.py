@@ -27,7 +27,7 @@ IS_MAC = sys.platform == "darwin"
 UI_FONT = "Segoe UI" if IS_WIN else "Helvetica Neue" if IS_MAC else "Sans Serif"
 MOD = "⌘" if IS_MAC else "Ctrl+"     # Qt maps Command to Ctrl on macOS
 APP_NAME = "CaptionShot"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 ACCENT = "#007AFF"            # Apple system blue (light); dark uses #0A84FF via theme()
 SWATCHES = ["#e53935", "#fb8c00", "#fdd835", "#43a047", "#1e88e5", "#ffffff"]
 MIN_W, MAX_W = 1, 20      # tool size range (Ctrl + scroll)
