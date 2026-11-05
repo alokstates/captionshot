@@ -15,7 +15,10 @@ with open(os.path.join(ROOT, "captionshot.py"), encoding="utf-8") as _f:
 a = Analysis(
     [os.path.join(ROOT, "captionshot.py")],
     pathex=[ROOT],
-    datas=[(os.path.join(ROOT, "fonts"), "fonts")],          # Mukta (Hindi) + its OFL licence
+    datas=[(os.path.join(ROOT, "fonts"), "fonts"),            # Mukta (Hindi) + its OFL licence
+           (os.path.join(ROOT, "LICENSE"), "."),              # licences must ship with the app
+           (os.path.join(ROOT, "NOTICE.md"), "."),
+           (os.path.join(ROOT, "licenses"), "licenses")],
     hiddenimports=["PySide6.QtSvg", "PySide6.QtNetwork"],     # imported at top level; listed to be safe
     excludes=["tkinter", "unittest", "pydoc", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtPdf",
               "PySide6.QtWebEngineCore", "PySide6.QtMultimedia", "PySide6.Qt3DCore"],
@@ -47,6 +50,7 @@ if IS_MAC:
             "CFBundleShortVersionString": VERSION,
             "LSUIElement": True,                              # menu bar app: no Dock icon
             "NSHighResolutionCapable": True,
+            "NSHumanReadableCopyright": "Copyright (c) 2026 alokstates. MIT License.",
             "NSScreenCaptureUsageDescription": "CaptionShot captures your screen to make screenshots.",
         },
     )
