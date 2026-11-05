@@ -1,7 +1,7 @@
 @echo off
 rem ============================================================================
 rem  CaptionShot - build the Windows installer.  Double-click, or run in cmd.
-rem  Result: dist\CaptionShot-Setup-1.1.3.exe
+rem  Result: dist\CaptionShot-Setup-1.1.4.exe
 rem  Needs: Python 3.10-3.15 (python.org). Inno Setup is installed for you if missing.
 rem ============================================================================
 setlocal EnableExtensions
@@ -70,17 +70,17 @@ if not defined ISCC (
   goto :fail
 )
 "%ISCC%" /Q "packaging\CaptionShot.iss" || goto :fail
-if not exist "dist\CaptionShot-Setup-1.1.3.exe" (
+if not exist "dist\CaptionShot-Setup-1.1.4.exe" (
   echo   Inno Setup finished but the installer is missing.
   goto :fail
 )
 
 echo.
-echo  DONE:  dist\CaptionShot-Setup-1.1.3.exe
+echo  DONE:  dist\CaptionShot-Setup-1.1.4.exe
 echo  Double-click it to install. Windows may say "Windows protected your PC" because the
 echo  installer is not code-signed: click "More info" ^> "Run anyway".
 rem CI is set on GitHub Actions: nobody is there to press a key or look at Explorer.
-if not defined CI explorer /select,"dist\CaptionShot-Setup-1.1.3.exe"
+if not defined CI explorer /select,"dist\CaptionShot-Setup-1.1.4.exe"
 echo.
 if not defined CI pause
 exit /b 0

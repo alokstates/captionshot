@@ -27,7 +27,7 @@ IS_MAC = sys.platform == "darwin"
 UI_FONT = "Segoe UI" if IS_WIN else "Helvetica Neue" if IS_MAC else "Sans Serif"
 MOD = "⌘" if IS_MAC else "Ctrl+"     # Qt maps Command to Ctrl on macOS
 APP_NAME = "CaptionShot"
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 ACCENT = "#007AFF"            # Apple system blue (light); dark uses #0A84FF via theme()
 SWATCHES = ["#e53935", "#fb8c00", "#fdd835", "#43a047", "#1e88e5", "#ffffff"]
 MIN_W, MAX_W = 1, 20      # tool size range (Ctrl + scroll)
@@ -740,6 +740,32 @@ def _bez_fit(pts, t1, t2, tol, depth=0):
             + _bez_fit(pts[split:], (-tc[0], -tc[1]), t2, tol, depth + 1))
 
 
+def _meant_straight(even):
+    """True when an evenly spaced mouse path is a straight drag with some hand wobble in it."""
+    a, b = even[0], even[-1]
+    chord = _dist(a, b)
+    if chord < 1:
+        return False
+    ux, uy = _unit(b[0] - a[0], b[1] - a[1])
+    slack = max(10.0, chord * 0.07)                     # how far a straight drag can drift by accident
+    off = [(q[0] - a[0], q[1] - a[1]) for q in even]
+    if any(not -slack <= x * ux + y * uy <= chord + slack for x, y in off):
+        return False                                    # ran past an end: it goes somewhere else first
+    side = [x * uy - y * ux for x, y in off]
+    # Average out tremor, and skip the ends, where the hand settles and slips on release.
+    w = max(1, len(side) // 24)
+    calm = [sum(side[max(0, i - w):i + w + 1]) / len(side[max(0, i - w):i + w + 1]) for i in range(len(side))]
+    skip = len(calm) // 20
+    calm = calm[skip:len(calm) - skip] or calm
+    peak = max(abs(v) for v in calm)
+    if peak <= slack:
+        return True
+    # A larger wobble still counts when it keeps crossing the line instead of bending one way.
+    big = [v for v in calm if abs(v) > 2]
+    crossings = sum(1 for i in range(len(big) - 1) if big[i] * big[i + 1] < 0)
+    return crossings >= 3 and peak <= slack * 1.25
+
+
 def arrow_polyline(raw):
     """The drawn line for a mouse path: two points when straight, else closely spaced points on a curve."""
     pts = [raw[0]]
@@ -749,15 +775,10 @@ def arrow_polyline(raw):
     if len(pts) < 3:
         return [pts[0], pts[-1]]
     a, b = pts[0], pts[-1]
-    chord = _dist(a, b)
     total = _path_len(pts)
-    ux, uy = _unit(b[0] - a[0], b[1] - a[1])
-    if chord > 0:
-        slack = max(3.0, chord * 0.025)
-        off = [(q[0] - a[0], q[1] - a[1]) for q in pts]
-        if all(abs(x * uy - y * ux) <= slack and -slack <= x * ux + y * uy <= chord + slack for x, y in off):
-            return [a, b]
     even = _resample(pts, max(2.0, total / 80))
+    if _meant_straight(even):
+        return [a, b]
     k = max(1, min(len(even) - 1, round(min(total * 0.12, 40.0) / (_path_len(even) / (len(even) - 1) or 1.0))))
     t1 = _unit(even[k][0] - a[0], even[k][1] - a[1])
     t2 = _unit(even[-1 - k][0] - b[0], even[-1 - k][1] - b[1])
