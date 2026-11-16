@@ -4352,6 +4352,33 @@ def selftest(app):
         pm = QPixmap(640, 400)
         pm.fill(QColor("#ffffff"))
         Overlay(_Ctl(), QGuiApplication.primaryScreen(), pm, "stamp").deleteLater()
+        # Freeze guard: small selections once made the layout re-enter itself until Python's
+        # recursion limit (app showed "Not responding"). Lay out many small boxes the way a
+        # finished drag does, without showing the window, and count the layout passes.
+        scr = QGuiApplication.primaryScreen()
+        big = QPixmap(scr.geometry().size())
+        big.fill(QColor("#888888"))
+        ov = Overlay(_Ctl(), scr, big, "16 Nov 2026, 19:32  ·  Some window title — Google Chrome")
+        passes = [0]
+        real_layout = ov.layout_widgets
+        def counted():
+            passes[0] += 1
+            return real_layout()
+        ov.layout_widgets = counted
+        g = ov.rect()
+        boxes = [QRect(min(int(g.width() * fx), g.width() - w), min(int(g.height() * fy), g.height() - h), w, h)
+                 for w, h in ((35, 16), (60, 40), (16, 120), (200, 24))
+                 for fx in (0.1, 0.5, 0.9) for fy in (0.1, 0.5, 0.95)]
+        for box in boxes:
+            passes[0] = 0
+            ov.sel, ov.state, ov.caption_open = box, "ready", True
+            ov.show_widgets(True)
+            app.processEvents()
+            if passes[0] > 20:
+                problems.append(f"layout loops on a {box.width()}x{box.height()} selection at "
+                                f"{box.x()},{box.y()} ({passes[0]} passes): overlay would freeze")
+                break
+        ov.deleteLater()
     except Exception as ex:                            # report, never crash the build
         problems.append(f"{type(ex).__name__}: {ex}")
     with open(out, "w", encoding="utf-8") as f:
