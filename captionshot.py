@@ -2182,6 +2182,7 @@ class Overlay(QWidget):
             vp.installEventFilter(self)
             self._opaque_vps.append(vp)
         self._last_heights = None
+        self._in_layout = False                # True while layout_widgets runs (see _text_resized)
         self.stamp.installEventFilter(self)
 
         self.actions, alay = self._bar(False)
@@ -2297,7 +2298,11 @@ class Overlay(QWidget):
         QTimer.singleShot(60, self.caption.setFocus)
 
     def _text_resized(self, *_):
-        """Caption or stamp grew/shrank a line: re-place widgets. Not called per keystroke."""
+        """Caption or stamp grew/shrank a line: re-place widgets. Not called per keystroke.
+        Ignored while layout_widgets runs: its trial setTextWidth calls emit this signal, and
+        re-entering the layout from there recursed until Python's recursion limit (app froze)."""
+        if self._in_layout:
+            return
         hs = (self.caption.document().size().height(), self.stamp.document().size().height())
         if hs != self._last_heights:
             self._last_heights = hs
@@ -2360,6 +2365,25 @@ class Overlay(QWidget):
             w.update()
 
     def layout_widgets(self):
+        if self.state != "ready" or self._in_layout:
+            return
+        self._in_layout = True
+        try:
+            # A pass can change the caption font, so text heights change: lay out again until they
+            # settle. Bounded, so a size that flips between two values can never loop forever.
+            last = None
+            for _ in range(3):
+                self._place_widgets()
+                hs = (self.caption.document().size().height(), self.stamp.document().size().height())
+                if hs == last:
+                    break
+                last = hs
+        finally:
+            self._in_layout = False
+            self._last_heights = (self.caption.document().size().height(),
+                                  self.stamp.document().size().height())
+
+    def _place_widgets(self):
         """Place toolbar, caption and actions OUTSIDE the selection.
         Wide shots: below, then above, then beside. Tall shots: beside first (left/right of the shot).
         The caption keeps a minimum height and scrolls when the note is long, so it never grows into
@@ -2439,7 +2463,7 @@ class Overlay(QWidget):
                 break
         if chosen is None and self.caption_open:      # shot fills the screen: fold, never cover it
             self.caption_open = False
-            return self.layout_widgets()
+            return self._place_widgets()
         if chosen is None:                             # even the button row has no outside spot
             chosen = ("inside", max(0, s.right() - aw - BUBBLE - 2 * m), max(0, s.bottom() - ah - m),
                       aw, 0, 0)
